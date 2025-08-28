@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Redacción topográfica v3.1 — Multitramos</title>
+  <title>Redacción topográfica v3.2 — Multitramos con auto-encadenar</title>
   <style>
     :root { --bg:#0f172a; --card:#111827; --ink:#e5e7eb; --muted:#9ca3af; --accent:#22d3ee; }
     *{ box-sizing: border-box; }
@@ -29,7 +29,7 @@
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>Redacción topográfica v3.1 — Multitramos</h1>
+      <h1>Redacción topográfica v3.2 — Multitramos con auto-encadenar</h1>
       <div class="content">
         <form method="post" id="form-tramos">
           <label style="display:inline-flex; gap:8px; align-items:center; margin-bottom:10px;">
@@ -40,16 +40,15 @@
           <table id="tabla">
             <thead>
               <tr>
-                <th style="width:10%">Est. inicio</th>
-                <th style="width:10%">Est. fin</th>
-                <th style="width:28%">Rumbo (texto)</th>
+                <th style="width:12%">Est. inicio</th>
+                <th style="width:12%">Est. fin</th>
+                <th style="width:30%">Rumbo (texto)</th>
                 <th style="width:12%">Distancia (m)</th>
                 <th>Colindancia</th>
                 <th style="width:8%"></th>
               </tr>
             </thead>
-            <tbody id="tbody">
-            </tbody>
+            <tbody id="tbody"></tbody>
           </table>
 
           <div class="row" style="display:flex; gap:10px;">
@@ -74,7 +73,6 @@
           <div class="row">
             {% if docx_ready %}
               <form method="post" action="/descargar">
-                <!-- Pasamos el objeto directamente con tojson para evitar errores de escape -->
                 <input type="hidden" name="payload_json" value='{{ {"tramos": resultado.tramos} | tojson | safe }}'>
                 <button class="btn" type="submit">Descargar Word (.docx)</button>
               </form>
@@ -106,10 +104,21 @@
   <script>
     function agregarFila() {
       const tpl = document.getElementById('tpl-fila').content.cloneNode(true);
-      document.getElementById('tbody').appendChild(tpl);
+      const tbody = document.getElementById('tbody');
+      const lastRow = tbody.lastElementChild;
+      tbody.appendChild(tpl);
+      if (lastRow) {
+        const lastFin = lastRow.querySelector('input[name="est_fin[]"]').value.trim();
+        if (lastFin) {
+          const newRow = tbody.lastElementChild;
+          const ini = newRow.querySelector('input[name="est_ini[]"]');
+          ini.value = lastFin;
+        }
+      }
     }
     function eliminarFila(btn) {
-      btn.closest('tr').remove();
+      const row = btn.closest('tr');
+      row.remove();
     }
     window.addEventListener('DOMContentLoaded', () => agregarFila());
   </script>

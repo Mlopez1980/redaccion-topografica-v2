@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: redaccion-topografica-v3-1
+    name: redaccion-topografica-v3-2
     env: python
     plan: free
     buildCommand: "pip install -r requirements.txt"
