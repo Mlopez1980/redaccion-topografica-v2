@@ -3,23 +3,23 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Redacción topográfica v3 — Multitramos</title>
+  <title>Redacción topográfica v3.1 — Multitramos</title>
   <style>
     :root { --bg:#0f172a; --card:#111827; --ink:#e5e7eb; --muted:#9ca3af; --accent:#22d3ee; }
     *{ box-sizing: border-box; }
-    body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell; background:var(--bg); color:var(--ink);} 
+    body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell; background:#0f172a; color:#e5e7eb;} 
     .wrap{ max-width: 1100px; margin: 40px auto; padding: 24px; }
     .card{ background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02)); border:1px solid rgba(255,255,255,.08); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.2); }
     .card h1{ margin: 0; padding: 20px 24px; border-bottom:1px solid rgba(255,255,255,.06); font-size: 22px; letter-spacing: .3px; }
     .content{ padding: 20px 24px; }
-    label{ font-size: 12px; color: var(--muted); }
-    input[type="text"], input[type="number"], textarea{ width: 100%; padding: 10px 10px; border-radius: 10px; border:1px solid rgba(255,255,255,.08); background:#0b1220; color:var(--ink); outline:none; }
+    label{ font-size: 12px; color: #9ca3af; }
+    input[type="text"], input[type="number"], textarea{ width: 100%; padding: 10px 10px; border-radius: 10px; border:1px solid rgba(255,255,255,.08); background:#0b1220; color:#e5e7eb; outline:none; }
     textarea{ min-height: 48px; }
     table{ width:100%; border-collapse: collapse; margin-top: 10px;}
     th, td{ border-bottom:1px solid rgba(255,255,255,.08); padding:8px; vertical-align: top; }
-    th{ text-align:left; color:var(--muted); font-weight:600; }
+    th{ text-align:left; color:#9ca3af; font-weight:600; }
     .btn{ appearance:none; border:0; background: var(--accent); color:#082f49; font-weight: 700; padding: 10px 14px; border-radius: 10px; cursor:pointer; }
-    .btn.secondary{ background:#0b1220; color:var(--ink); border:1px solid rgba(255,255,255,.12); }
+    .btn.secondary{ background:#0b1220; color:#e5e7eb; border:1px solid rgba(255,255,255,.12); }
     .row{ margin-top: 14px; }
     .out{ background:#0b1220; border:1px dashed rgba(255,255,255,.18); padding: 14px 16px; border-radius: 12px; margin-top:10px; }
     .err{ color:#fecaca; }
@@ -29,7 +29,7 @@
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>Redacción topográfica v3 — Multitramos</h1>
+      <h1>Redacción topográfica v3.1 — Multitramos</h1>
       <div class="content">
         <form method="post" id="form-tramos">
           <label style="display:inline-flex; gap:8px; align-items:center; margin-bottom:10px;">
@@ -74,7 +74,8 @@
           <div class="row">
             {% if docx_ready %}
               <form method="post" action="/descargar">
-                <input type="hidden" name="payload_json" value="{{ resultado.payload_json|e }}">
+                <!-- Pasamos el objeto directamente con tojson para evitar errores de escape -->
+                <input type="hidden" name="payload_json" value='{{ {"tramos": resultado.tramos} | tojson | safe }}'>
                 <button class="btn" type="submit">Descargar Word (.docx)</button>
               </form>
             {% else %}
@@ -110,7 +111,6 @@
     function eliminarFila(btn) {
       btn.closest('tr').remove();
     }
-    // arranca con una fila
     window.addEventListener('DOMContentLoaded', () => agregarFila());
   </script>
 </body>
