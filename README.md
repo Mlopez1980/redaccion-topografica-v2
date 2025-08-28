@@ -1,31 +1,15 @@
-# Redacción topográfica v2
+# Redacción topográfica v3 — Multitramos
 
-- Colindancia por tramo.
-- Ingreso de rumbo como texto (`N, 25, 35, 20, O`) o por campos.
-- Salida en texto y compacta. Exportación a Word con encabezado de Honduras Constructores.
-
-## Encabezado
-El `.docx` incluye encabezado con el logo (`static/logo_hc.png`) y el texto:
-"Este programa fue creado por Honduras Constructores S de R L".
-
-## Estructura
-```
-redaccion-topografica-v2/
-├─ app.py
-├─ requirements.txt
-├─ runtime.txt
-├─ render.yaml
-├─ static/
-│  └─ logo_hc.png
-└─ templates/
-   └─ formulario.html
-```
+- Múltiples tramos con **estación inicio/fin**, **rumbo**, **distancia** y **colindancia**.
+- Exportación a **Word (.docx)** con encabezado (logo + texto).
+- Rumbo aceptado como texto: `N, 25, 35, 20, O` o `N 25°35'20'' O`.
 
 ## Local
 ```
 pip install -r requirements.txt
 python app.py
 ```
+Abrir http://127.0.0.1:5000
 
 ## Render
 Build: `pip install -r requirements.txt`  
