@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Redacción topográfica v2</title>
+  <style>
+    :root { --bg:#0f172a; --card:#111827; --ink:#e5e7eb; --muted:#9ca3af; --accent:#22d3ee; }
+    *{ box-sizing: border-box; }
+    body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell; background:var(--bg); color:var(--ink);} 
+    .wrap{ max-width: 960px; margin: 40px auto; padding: 24px; }
+    .card{ background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02)); border:1px solid rgba(255,255,255,.08); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.2); }
+    .card h1{ margin: 0; padding: 20px 24px; border-bottom:1px solid rgba(255,255,255,.06); font-size: 22px; letter-spacing: .3px; }
+    .content{ padding: 20px 24px; }
+    .grid{ display:grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+    label{ display:block; font-size: 12px; color: var(--muted); margin-bottom: 6px; letter-spacing:.2px; }
+    input[type="text"], input[type="number"], textarea, select{ width: 100%; padding: 12px 12px; border-radius: 12px; border:1px solid rgba(255,255,255,.08); background:#0b1220; color:var(--ink); outline:none; }
+    textarea{ min-height: 72px; }
+    .hint{ font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .btn{ appearance:none; border:0; background: var(--accent); color:#082f49; font-weight: 700; padding: 12px 18px; border-radius: 12px; cursor:pointer; transition:.2s transform ease; }
+    .btn:hover{ transform: translateY(-1px); }
+    .row{ grid-column: span 12; }
+    .col-6{ grid-column: span 6; }
+    .col-4{ grid-column: span 4; }
+    .col-3{ grid-column: span 3; }
+    .pill{ display:inline-flex; gap:10px; align-items:center; padding: 10px 12px; border-radius: 999px; background:#0b1220; border:1px solid rgba(255,255,255,.08); }
+    .out{ background:#0b1220; border:1px dashed rgba(255,255,255,.18); padding: 14px 16px; border-radius: 12px; }
+    .err{ color:#fecaca; }
+    code{ color:#93c5fd; }
+    .actions{ display:flex; gap:12px; flex-wrap:wrap; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Redacción topográfica v2</h1>
+      <div class="content">
+        <form method="post" class="grid">
+          <div class="col-6">
+            <label for="est_ini">Estación inicio (alfanumérica)</label>
+            <input type="text" id="est_ini" name="est_ini" placeholder="Ej. 1A" required>
+          </div>
+          <div class="col-6">
+            <label for="est_fin">Estación fin (alfanumérica)</label>
+            <input type="text" id="est_fin" name="est_fin" placeholder="Ej. 1B" required>
+          </div>
+
+          <div class="row">
+            <label class="pill">
+              <input type="checkbox" name="convertir" checked>
+              <span>Convertir números en las estaciones a palabras (1 → uno)</span>
+            </label>
+          </div>
+
+          <div class="row">
+            <label for="rumbo_texto">Rumbo como texto (opcional) — formato libre</label>
+            <input type="text" id="rumbo_texto" name="rumbo_texto" placeholder="Ej. N, 25, 35, 20, O ó N 25°35'20'' O">
+            <div class="hint">Si completas este campo, se ignorarán los campos de abajo.</div>
+          </div>
+
+          <div class="col-3">
+            <label for="card1">Cardinal inicial</label>
+            <select name="card1" id="card1">
+              <option value="N">N</option>
+              <option value="S">S</option>
+            </select>
+          </div>
+          <div class="col-3">
+            <label for="grados">Grados (0–359)</label>
+            <input type="number" id="grados" name="grados" min="0" max="359" value="0">
+          </div>
+          <div class="col-3">
+            <label for="minutos">Minutos (0–59)</label>
+            <input type="number" id="minutos" name="minutos" min="0" max="59" value="0">
+          </div>
+          <div class="col-3">
+            <label for="segundos">Segundos (0–59)</label>
+            <input type="number" id="segundos" name="segundos" min="0" max="59" value="0">
+          </div>
+          <div class="col-3">
+            <label for="card2">Cardinal final</label>
+            <select name="card2" id="card2">
+              <option value="E">E</option>
+              <option value="O">O</option>
+            </select>
+          </div>
+
+          <div class="row">
+            <label for="colindancia">Colindancia (texto libre, opcional)</label>
+            <textarea id="colindancia" name="colindancia" placeholder="Ej. colinda con apartamento 2C pasillo de por medio"></textarea>
+          </div>
+
+          <div class="row">
+            <button class="btn" type="submit">Generar redacción</button>
+          </div>
+        </form>
+
+        {% if errores and errores|length %}
+          <div class="row">
+            <div class="out err">
+              <strong>Revisa:</strong>
+              <ul>
+                {% for e in errores %}<li>{{ e }}</li>{% endfor %}
+              </ul>
+            </div>
+          </div>
+        {% endif %}
+
+        {% if resultado %}
+          <div class="row">
+            <div class="out">
+              <p><strong>Redacción completa:</strong></p>
+              <p>{{ resultado.redaccion }}</p>
+            </div>
+          </div>
+          <div class="grid">
+            <div class="col-6">
+              <div class="out">
+                <p><strong>Rumbo en texto:</strong></p>
+                <p>{{ resultado.rumbo_texto }}</p>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="out">
+                <p><strong>Rumbo compacto (solicitado):</strong></p>
+                <p><code>{{ resultado.rumbo_compacto_solicitado }}</code></p>
+                <p class="hint">Formato exacto: <code>N ° G MM´SS´ O</code></p>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="out">
+                <p><strong>Rumbo compacto (convencional):</strong></p>
+                <p><code>{{ resultado.rumbo_compacto_convencional }}</code></p>
+              </div>
+            </div>
+          </div>
+
+          <div class="row">
+            {% if docx_ready %}
+              <form method="post" action="/descargar" class="actions">
+                <input type="hidden" name="redaccion" value="{{ resultado.redaccion }}">
+                <input type="hidden" name="rumbo_texto" value="{{ resultado.rumbo_texto }}">
+                <input type="hidden" name="rumbo_compacto_solicitado" value="{{ resultado.rumbo_compacto_solicitado }}">
+                <input type="hidden" name="rumbo_compacto_convencional" value="{{ resultado.rumbo_compacto_convencional }}">
+                <input type="hidden" name="est_ini_txt" value="{{ resultado.est_ini_txt }}">
+                <input type="hidden" name="est_fin_txt" value="{{ resultado.est_fin_txt }}">
+                <input type="hidden" name="colindancia" value="{{ resultado.colindancia }}">
+                <button class="btn" type="submit">Descargar Word (.docx)</button>
+              </form>
+            {% else %}
+              <div class="out err">
+                python-docx no está disponible en el servidor. Agrega <code>python-docx</code> a <code>requirements.txt</code> y vuelve a desplegar.
+              </div>
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</body>
+</html>
