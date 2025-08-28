@@ -1,28 +1,14 @@
-# Redacción topográfica v3.2 — Multitramos con auto-encadenar
+# Redacción topográfica v3.3 — Version check
 
-- **Auto-encadenar**: si dejas vacío el inicio de un tramo, toma el fin del tramo anterior; al agregar fila nueva, copia automáticamente ese valor en la UI.
-- Múltiples tramos: Est. inicio/fin, Rumbo, Distancia, Colindancia.
-- Exportación a **Word (.docx)** con encabezado (logo + texto institucional).
-- Parser flexible para rumbos: `N, 25, 35, 20, O`, `S 10°0'30'' E`, `N 10 5 0 O`, y palabras (Norte/Sur/Este/Oeste).
+- Igual que v3.2 (multitramos, auto-encadenar, DOCX con encabezado) + endpoint **/_version** para verificar el deploy.
+- Título de la página muestra la versión: **v3.3-versioncheck**.
 
-## Local
+## Comprobar versión en Render
+Abre `https://TU-SERVICIO.onrender.com/_version` y debe devolver:
 ```
-pip install -r requirements.txt
-python app.py
+{"version":"v3.3-versioncheck","docx":true}
 ```
-Abrir http://127.0.0.1:5000
 
-## Render
+## Despliegue
 Build: `pip install -r requirements.txt`  
 Start: `gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 2 --timeout 120`
-
-## Estructura
-```
-app.py
-templates/formulario.html
-static/logo_hc.png
-requirements.txt
-runtime.txt
-render.yaml
-README.md
-```
