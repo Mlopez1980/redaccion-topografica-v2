@@ -147,7 +147,13 @@ def index():
                        'rumbo_compacto_solicitado':compacto_solicitado,
                        'rumbo_compacto_convencional':compacto_convencional,
                        'est_ini_txt':est_ini_txt,'est_fin_txt':est_fin_txt,'colindancia':colindancia}
-    return render_template('formulario.html', resultado=resultado, errores=errores, docx_ready=DOCX_AVAILABLE)
+    return render_template(
+    'formulario.html',
+    errores=errores,
+    resultado=resultado,
+    docx_ready=DOCX_AVAILABLE,
+    app_version=APP_VERSION
+)
 
 @app.route('/descargar', methods=['POST'])
 def descargar():
