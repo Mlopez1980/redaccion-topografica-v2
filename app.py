@@ -1,16 +1,16 @@
 from flask import Flask, render_template, request, send_file, jsonify
-import re, os
+import re, os, json, traceback
 from io import BytesIO
 from datetime import datetime
+
 APP_VERSION = "v3.3-versioncheck"
 
 try:
-from docx import Document
-from docx.shared import Pt, Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-DOCX_AVAILABLE = True
+    from docx import Document
+    from docx.shared import Pt, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    DOCX_AVAILABLE = True
 except Exception:
-
     DOCX_AVAILABLE = False
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,9 +18,6 @@ LOGO_PATH = os.path.join(BASE_DIR, "static", "logo_hc.png")
 HEADER_TEXT = "Este programa fue creado por Honduras Constructores S de R L"
 
 app = Flask(__name__)
-@app.route('/_version')
-def version():
-    return jsonify({"version": APP_VERSION, "docx": DOCX_AVAILABLE})
 
 UNIDADES = ["cero","uno","dos","tres","cuatro","cinco","seis","siete","ocho","nueve"]
 ESPECIALES_10_19 = ["diez","once","doce","trece","catorce","quince","dieciséis","diecisiete","dieciocho","diecinueve"]
@@ -68,27 +65,39 @@ def parsear_rumbo_texto(raw:str):
     if not raw: return None
     t=raw.strip()
     if not t: return None
+    # Normaliza palabras cardinales a letras
+    t = re.sub(r'\bNORTE\b','N',t,flags=re.I)
+    t = re.sub(r'\bSUR\b','S',t,flags=re.I)
+    t = re.sub(r'\bESTE\b','E',t,flags=re.I)
+    t = re.sub(r'\bOESTE\b','O',t,flags=re.I)
     norm=t.replace("°"," ").replace("º"," ").replace("’","'").replace("´","'")
     norm=re.sub(r"[;|/]+"," ",norm)
+    norm = re.sub(r'\bW\b','O',norm,flags=re.I)
+
+    # Formato con comas: N, 25, 35, 20, O
+    partes=[p.strip() for p in norm.split(',') if p.strip()]
+    if len(partes)>=5:
+        c1=partes[0].upper()
+        try:
+            g=int(re.sub(r"\D","", partes[1] or "0"))
+            m=int(re.sub(r"\D","", partes[2] or "0"))
+            s=int(re.sub(r"\D","", partes[3] or "0"))
+        except ValueError:
+            return None
+        c2=partes[4].upper()
+        return (c1,g,m,s,c2)
+
+    # Formato libre: N 25 35 20 O (o con símbolos mezclados)
     cards=re.findall(r"[NnSsEeOoWw]",norm)
     nums=re.findall(r"\d+",norm)
-    if len(nums)<3 or not cards:
-        partes=[p.strip() for p in t.split(',') if p.strip()]
-        if len(partes)>=5:
-            c1=partes[0].strip().upper()
-            g=int(re.sub(r"\D","",partes[1]))
-            m=int(re.sub(r"\D","",partes[2]))
-            s=int(re.sub(r"\D","",partes[3]))
-            c2=partes[4].strip().upper()
-            c1='O' if c1=='W' else c1
-            c2='O' if c2=='W' else c2
-            return (c1,g,m,s,c2)
-        return None
-    c1=cards[0].upper(); c2=cards[-1].upper()
-    c1='O' if c1=='W' else c1
-    c2='O' if c2=='W' else c2
-    g=int(nums[0]); m=int(nums[1]); s=int(nums[2])
-    return (c1,g,m,s,c2)
+    if len(nums)>=3 and len(cards)>=2:
+        c1=cards[0].upper(); c2=cards[-1].upper()
+        if c1=='W': c1='O'
+        if c2=='W': c2='O'
+        g=int(nums[0]); m=int(nums[1]); s=int(nums[2])
+        return (c1,g,m,s,c2)
+
+    return None
 
 def rumbo_texto(card1:str,g:int,m:int,s:int,card2:str)->str:
     g_w=forma_masculina(numero_a_palabras(g))
@@ -104,105 +113,156 @@ def rumbo_compacto_solicitado(card1:str,g:int,m:int,s:int,card2:str)->str:
 def rumbo_compacto_convencional(card1:str,g:int,m:int,s:int,card2:str)->str:
     return f"{card1} {g}° {m}' {s}'' {card2}"
 
-from flask import jsonify
+@app.route('/_version')
+def version():
+    return jsonify({"version": APP_VERSION, "docx": DOCX_AVAILABLE})
 
 @app.route('/', methods=['GET','POST'])
 def index():
-    resultado=None; errores=[]
+    errores=[]; resultado=None
     if request.method=='POST':
-        est_ini_raw=(request.form.get('est_ini') or '').strip()
-        est_fin_raw=(request.form.get('est_fin') or '').strip()
         convertir = request.form.get('convertir','on')=='on'
-        colindancia=(request.form.get('colindancia') or '').strip()
-        rumbo_texto_entrada=(request.form.get('rumbo_texto') or '').strip()
-        if rumbo_texto_entrada:
-            parsed=parsear_rumbo_texto(rumbo_texto_entrada)
+        est_ini_list = request.form.getlist('est_ini[]')
+        est_fin_list = request.form.getlist('est_fin[]')
+        rumbo_txt_list = request.form.getlist('rumbo_texto[]')
+        distancia_list = request.form.getlist('distancia[]')
+        colind_list = request.form.getlist('colindancia[]')
+
+        n = max(len(est_ini_list), len(est_fin_list), len(rumbo_txt_list), len(distancia_list), len(colind_list))
+        tramos = []
+        prev_fin_raw = None
+
+        for i in range(n):
+            est_ini = (est_ini_list[i] if i < len(est_ini_list) else '').strip()
+            est_fin = (est_fin_list[i] if i < len(est_fin_list) else '').strip()
+            rumbo_raw = (rumbo_txt_list[i] if i < len(rumbo_txt_list) else '').strip()
+            distancia_raw = (distancia_list[i] if i < len(distancia_list) else '').strip()
+            colind = (colind_list[i] if i < len(colind_list) else '').strip()
+
+            # Auto-encadenar: si no hay inicio y existe un fin previo, usarlo
+            if not est_ini and prev_fin_raw:
+                est_ini = prev_fin_raw
+
+            # Saltar filas completamente vacías
+            if not (est_ini or est_fin or rumbo_raw or distancia_raw or colind):
+                continue
+
+            if not est_ini or not est_fin:
+                errores.append(f"Fila {i+1}: ingresa estación inicio y fin (auto-encadené inicio='{est_ini or '∅'}').")
+                prev_fin_raw = est_fin or prev_fin_raw
+                continue
+
+            parsed = parsear_rumbo_texto(rumbo_raw)
             if not parsed:
-                errores.append("No pude interpretar el rumbo desde el texto. Revisa el formato.")
-            else:
-                c1,g,m,s,c2=parsed
-        else:
-            c1=(request.form.get('card1') or '').upper()
-            c2=(request.form.get('card2') or '').upper()
+                errores.append(f"Fila {i+1}: no pude interpretar el rumbo \"{rumbo_raw}\".")
+                prev_fin_raw = est_fin
+                continue
+            c1,g,m,s,c2 = parsed
+
             try:
-                g=int(request.form.get('grados') or '0')
-                m=int(request.form.get('minutos') or '0')
-                s=int(request.form.get('segundos') or '0')
+                distancia = float(distancia_raw) if distancia_raw else None
             except ValueError:
-                errores.append("Grados/minutos/segundos deben ser números enteros.")
-                g=m=s=0
-        if not est_ini_raw or not est_fin_raw: errores.append("Ingresa ambas estaciones (inicio y fin).")
-        if c1 not in {'N','S'} or c2 not in {'E','O'}: errores.append("Orientaciones inválidas. Usa N/S y E/O.")
-        if not (0<=g<=359 and 0<=m<=59 and 0<=s<=59): errores.append("Rango inválido para grados (0–359), minutos/segundos (0–59).")
+                errores.append(f"Fila {i+1}: distancia inválida.")
+                distancia = None
+
+            est_ini_txt = etiqueta_a_texto(est_ini, convertir_numeros=convertir)
+            est_fin_txt = etiqueta_a_texto(est_fin, convertir_numeros=convertir)
+            texto_rumbo = rumbo_texto(c1,g,m,s,c2)
+            compacto_solicitado = rumbo_compacto_solicitado(c1,g,m,s,c2)
+            compacto_convencional = rumbo_compacto_convencional(c1,g,m,s,c2)
+
+            redaccion = f"De la estación {est_ini_txt} a la estación {est_fin_txt}, con rumbo {texto_rumbo}."
+            if distancia is not None:
+                redaccion += f" Distancia {distancia:.2f} m."
+            if colind:
+                redaccion += f" {colind}"
+
+            tramos.append({
+                "est_ini_txt": est_ini_txt,
+                "est_fin_txt": est_fin_txt,
+                "rumbo_texto": texto_rumbo,
+                "rumbo_compacto_solicitado": compacto_solicitado,
+                "rumbo_compacto_convencional": compacto_convencional,
+                "distancia": distancia,
+                "colindancia": colind,
+                "redaccion": redaccion
+            })
+
+            # actualizar para encadenar siguiente inicio
+            prev_fin_raw = est_fin
+
+        if not tramos and not errores:
+            errores.append("Agrega al menos un tramo.")
+
         if not errores:
-            est_ini_txt=etiqueta_a_texto(est_ini_raw, convertir_numeros=convertir)
-            est_fin_txt=etiqueta_a_texto(est_fin_raw, convertir_numeros=convertir)
-            frase_estaciones=f"de la estación {est_ini_txt} a la estación {est_fin_txt}"
-            texto_rumbo=rumbo_texto(c1,g,m,s,c2)
-            compacto_solicitado=rumbo_compacto_solicitado(c1,g,m,s,c2)
-            compacto_convencional=rumbo_compacto_convencional(c1,g,m,s,c2)
-            redaccion=f"{frase_estaciones}, con rumbo {texto_rumbo}."
-            if colindancia: redaccion+=f" {colindancia.strip()}"
-            resultado={'redaccion':redaccion,'rumbo_texto':texto_rumbo,
-                       'rumbo_compacto_solicitado':compacto_solicitado,
-                       'rumbo_compacto_convencional':compacto_convencional,
-                       'est_ini_txt':est_ini_txt,'est_fin_txt':est_fin_txt,'colindancia':colindancia}
-    return render_template(
-    'formulario.html',
-    errores=errores,
-    resultado=resultado,
-    docx_ready=DOCX_AVAILABLE,
-    app_version=APP_VERSION
-)
+            redaccion_total = "\n".join(f"{idx+1}) {t['redaccion']}" for idx, t in enumerate(tramos))
+            resultado = {
+                "tramos": tramos,
+                "redaccion_total": redaccion_total
+            }
+
+    return render_template('formulario.html', errores=errores, resultado=resultado,
+                           docx_ready=DOCX_AVAILABLE, app_version=APP_VERSION)
 
 @app.route('/descargar', methods=['POST'])
 def descargar():
-    redaccion=(request.form.get('redaccion') or '').strip()
-    rumbo_texto_val=(request.form.get('rumbo_texto') or '').strip()
-    rumbo_compacto_sol=(request.form.get('rumbo_compacto_solicitado') or '').strip()
-    rumbo_compacto_conv=(request.form.get('rumbo_compacto_convencional') or '').strip()
-    est_ini_txt=(request.form.get('est_ini_txt') or '').strip()
-    est_fin_txt=(request.form.get('est_fin_txt') or '').strip()
-    colindancia=(request.form.get('colindancia') or '').strip()
-    if not redaccion: return "No hay redacción para exportar. Genera la redacción primero.", 400
-    if not DOCX_AVAILABLE: return "La librería python-docx no está instalada en el servidor.", 500
+    if not DOCX_AVAILABLE:
+        return "La librería python-docx no está instalada en el servidor.", 500
 
-    doc=Document()
-    styles=doc.styles['Normal']; styles.font.name='Calibri'; styles.font.size=Pt(11)
-
-    # Header with logo + text
-    section=doc.sections[0]; header=section.header
-    table=header.add_table(rows=1, cols=2); table.autofit=True
-    # logo left
     try:
-        if os.path.exists(LOGO_PATH):
-            left_p=table.cell(0,0).paragraphs[0]
-            left_p.alignment=WD_ALIGN_PARAGRAPH.LEFT
-            left_p.add_run().add_picture(LOGO_PATH, width=Inches(1.8))
+        payload_json = request.form.get('payload_json', '')
+        data = json.loads(payload_json)
+        tramos = data.get("tramos", [])
+    except Exception as e:
+        return f"No pude leer los datos para el Word. Detalle: {e}", 400
+
+    try:
+        doc = Document()
+        styles=doc.styles['Normal']; styles.font.name='Calibri'; styles.font.size=Pt(11)
+
+        section=doc.sections[0]; header=section.header
+        table=header.add_table(rows=1, cols=2); table.autofit=True
+        try:
+            if os.path.exists(LOGO_PATH):
+                left_p=table.cell(0,0).paragraphs[0]
+                left_p.alignment=WD_ALIGN_PARAGRAPH.LEFT
+                left_p.add_run().add_picture(LOGO_PATH, width=Inches(1.8))
+        except Exception:
+            pass
+        right_p=table.cell(0,1).paragraphs[0]; right_p.alignment=WD_ALIGN_PARAGRAPH.RIGHT
+        rt=right_p.add_run(HEADER_TEXT); rt.bold=True; rt.font.size=Pt(10)
+
+        doc.add_heading('Redacción topográfica', level=1)
+        doc.add_paragraph(datetime.now().strftime("Generado el %Y-%m-%d %H:%M:%S"))
+
+        doc.add_paragraph().add_run("Resumen de tramos:").bold = True
+        for i, t in enumerate(tramos, start=1):
+            doc.add_paragraph(f"{i}) {t['redaccion']}")
+
+        doc.add_paragraph().add_run("Detalle:").bold = True
+        tbl = doc.add_table(rows=1, cols=6)
+        hdr = tbl.rows[0].cells
+        hdr[0].text = "Est. Inicio"
+        hdr[1].text = "Est. Fin"
+        hdr[2].text = "Rumbo (texto)"
+        hdr[3].text = "Rumbo compacto"
+        hdr[4].text = "Distancia (m)"
+        hdr[5].text = "Colindancia"
+
+        for t in tramos:
+            row = tbl.add_row().cells
+            row[0].text = t["est_ini_txt"]
+            row[1].text = t["est_fin_txt"]
+            row[2].text = t["rumbo_texto"]
+            row[3].text = t["rumbo_compacto_solicitado"]
+            row[4].text = "" if t["distancia"] is None else f"{t['distancia']:.2f}"
+            row[5].text = t["colindancia"] or ""
+
+        bio = BytesIO(); doc.save(bio); bio.seek(0)
+        return send_file(bio, as_attachment=True, download_name="Redaccion_Multitramos.docx",
+                         mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     except Exception:
-        pass
-    # text right
-    right_p=table.cell(0,1).paragraphs[0]
-    right_p.alignment=WD_ALIGN_PARAGRAPH.RIGHT
-    r=right_p.add_run(HEADER_TEXT); r.bold=True; r.font.size=Pt(10)
-
-    # Body
-    doc.add_heading('Redacción topográfica', level=1)
-    doc.add_paragraph(datetime.now().strftime("Generado el %Y-%m-%d %H:%M:%S"))
-    doc.add_paragraph().add_run("Tramo: ").bold=True
-    doc.add_paragraph(f"Estaciones: {est_ini_txt} → {est_fin_txt}")
-    if colindancia: doc.add_paragraph(f"Colindancia: {colindancia}")
-    doc.add_paragraph().add_run("Rumbos:").bold=True
-    doc.add_paragraph(f"En texto: {rumbo_texto_val}")
-    doc.add_paragraph(f"Compacto (solicitado): {rumbo_compacto_sol}")
-    doc.add_paragraph(f"Compacto (convencional): {rumbo_compacto_conv}")
-    doc.add_paragraph().add_run("Redacción completa:").bold=True
-    doc.add_paragraph(redaccion)
-
-    bio=BytesIO(); doc.save(bio); bio.seek(0)
-    filename=f"Redaccion_{est_ini_txt.replace(' ','')}_{est_fin_txt.replace(' ','')}.docx" or "Redaccion.docx"
-    return send_file(bio, as_attachment=True, download_name=filename,
-                     mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        return "Error generando DOCX:\n" + traceback.format_exc(), 500
 
 if __name__=='__main__':
     app.run(debug=True)
