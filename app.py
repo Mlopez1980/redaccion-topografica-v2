@@ -3,7 +3,7 @@ import re, os, json, traceback
 from io import BytesIO
 from datetime import datetime
 
-APP_VERSION = "v3.4-colind-rumbo"
+APP_VERSION = "v3.5-dist-letras"
 
 # --- Dependencias opcionales para DOCX ---
 try:
@@ -29,6 +29,7 @@ DECENAS = [None,None,"veinte","treinta","cuarenta","cincuenta","sesenta","setent
 CIENTOS = {100:"cien",200:"doscientos",300:"trescientos",400:"cuatrocientos",500:"quinientos",600:"seiscientos",700:"setecientos",800:"ochocientos",900:"novecientos"}
 
 def numero_a_palabras(n:int)->str:
+    """0–999"""
     if n<0 or n>999: raise ValueError("Solo se admite 0–999 para esta app")
     if n<10: return UNIDADES[n]
     if 10<=n<=19: return ESPECIALES_10_19[n-10]
@@ -40,6 +41,17 @@ def numero_a_palabras(n:int)->str:
     if n==100: return CIENTOS[100]
     pref=CIENTOS.get(c,"ciento")
     return pref if r==0 else f"{pref} {numero_a_palabras(r)}"
+
+def entero_a_palabras_miles(n:int)->str:
+    """0–999,999 usando numero_a_palabras para cada bloque de 0–999."""
+    if n<1000:
+        return numero_a_palabras(n)
+    miles, resto = divmod(n, 1000)
+    if miles == 1:
+        pref = "mil"
+    else:
+        pref = f"{numero_a_palabras(miles)} mil"
+    return pref if resto==0 else f"{pref} {numero_a_palabras(resto)}"
 
 def forma_masculina(frase:str)->str:
     # uno -> un / veintiuno -> veintiún / "y uno" -> "y un"
@@ -128,6 +140,46 @@ def normalizar_colindancia(txt:str)->str:
         return t[0].upper() + t[1:]  # capitaliza la primera
     return "Colinda con " + t
 
+def distancia_a_palabras(distancia_raw:str)->str|None:
+    """
+    Convierte '10.15' -> 'diez punto quince metros'
+    Maneja ',' como separador decimal. Soporta enteros hasta 999,999.
+    """
+    if not distancia_raw: return None
+    txt = distancia_raw.strip().replace(",", ".")
+    # Solo números positivos con opcional decimal
+    if not re.fullmatch(r"\d+(?:\.\d+)?", txt):
+        return None
+    int_part_str, dot, frac_part_str = txt.partition(".")
+    try:
+        int_val = int(int_part_str)
+    except ValueError:
+        return None
+    # 0–999,999
+    if int_val > 999_999:
+        # Si es muy grande, no lo convertimos a palabras
+        int_words = int_part_str  # fallback: dígitos
+    else:
+        int_words = entero_a_palabras_miles(int_val)
+
+    if dot and frac_part_str:
+        # quitar ceros a la izquierda en la parte decimal para pronunciar natural
+        frac_trim = frac_part_str.lstrip("0")
+        if frac_trim == "":
+            # si era 10.00 -> solo 'diez metros'
+            return f"{int_words} metros"
+        try:
+            frac_val = int(frac_trim)
+        except ValueError:
+            return f"{int_words} metros"
+        if frac_val <= 999:
+            frac_words = numero_a_palabras(frac_val)
+        else:
+            frac_words = frac_trim  # fallback a dígitos si excede 999
+        return f"{int_words} punto {frac_words} metros"
+    else:
+        return f"{int_words} metros"
+
 # ---------- Ayudante para construir tramos (lo usa index y descargar) ----------
 def construir_tramos_desde_form(form):
     convertir = form.get('convertir','on')=='on'
@@ -169,11 +221,15 @@ def construir_tramos_desde_form(form):
             continue
         c1,g,m,s,c2 = parsed
 
-        try:
-            distancia = float(distancia_raw) if distancia_raw else None
-        except ValueError:
-            errores.append(f"Fila {i+1}: distancia inválida.")
-            distancia = None
+        # Distancia (num) y en letras
+        distancia = None
+        dist_letras = None
+        if distancia_raw:
+            try:
+                distancia = float(distancia_raw.replace(",", "."))
+            except ValueError:
+                errores.append(f"Fila {i+1}: distancia inválida.")
+            dist_letras = distancia_a_palabras(distancia_raw)
 
         est_ini_txt = etiqueta_a_texto(est_ini, convertir_numeros=convertir)
         est_fin_txt = etiqueta_a_texto(est_fin, convertir_numeros=convertir)
@@ -184,7 +240,10 @@ def construir_tramos_desde_form(form):
         redaccion = (f"De la estación {est_ini_txt} a la estación {est_fin_txt}, "
                      f"con rumbo {texto_rumbo} ({compacto_usuario}).")
         if distancia is not None:
-            redaccion += f" Distancia {distancia:.2f} m."
+            if dist_letras:
+                redaccion += f" Distancia {distancia:.2f} m ({dist_letras})."
+            else:
+                redaccion += f" Distancia {distancia:.2f} m."
         if colind_fmt:
             redaccion += f" {colind_fmt}"
 
@@ -194,6 +253,7 @@ def construir_tramos_desde_form(form):
             "rumbo_texto": texto_rumbo,
             "rumbo_compacto": compacto_usuario,
             "distancia": distancia,
+            "distancia_letras": dist_letras,
             "colindancia": colind_fmt,
             "redaccion": redaccion
         })
@@ -272,14 +332,15 @@ def descargar():
 
         # Detalle
         doc.add_paragraph().add_run("Detalle:").bold = True
-        tbl = doc.add_table(rows=1, cols=6)
+        tbl = doc.add_table(rows=1, cols=7)
         hdr = tbl.rows[0].cells
         hdr[0].text = "Est. Inicio"
         hdr[1].text = "Est. Fin"
         hdr[2].text = "Rumbo (texto)"
         hdr[3].text = "Rumbo compacto"
         hdr[4].text = "Distancia (m)"
-        hdr[5].text = "Colindancia"
+        hdr[5].text = "Distancia (letras)"
+        hdr[6].text = "Colindancia"
 
         for t in tramos:
             row = tbl.add_row().cells
@@ -288,7 +349,8 @@ def descargar():
             row[2].text = t["rumbo_texto"]
             row[3].text = t["rumbo_compacto"]
             row[4].text = "" if t["distancia"] is None else f"{t['distancia']:.2f}"
-            row[5].text = t["colindancia"] or ""
+            row[5].text = t.get("distancia_letras") or ""
+            row[6].text = t["colindancia"] or ""
 
         bio = BytesIO(); doc.save(bio); bio.seek(0)
         return send_file(bio, as_attachment=True, download_name="Redaccion_Multitramos.docx",
