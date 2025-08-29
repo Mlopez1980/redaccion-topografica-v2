@@ -1,14 +1,16 @@
-from flask import Flask, render_template, request, send_file
+from flask import Flask, render_template, request, send_file, jsonify
 import re, os
 from io import BytesIO
 from datetime import datetime
+APP_VERSION = "v3.3-versioncheck"
 
 try:
-    from docx import Document
-    from docx.shared import Pt, Inches
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    DOCX_AVAILABLE = True
+from docx import Document
+from docx.shared import Pt, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+DOCX_AVAILABLE = True
 except Exception:
+
     DOCX_AVAILABLE = False
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -16,6 +18,9 @@ LOGO_PATH = os.path.join(BASE_DIR, "static", "logo_hc.png")
 HEADER_TEXT = "Este programa fue creado por Honduras Constructores S de R L"
 
 app = Flask(__name__)
+@app.route('/_version')
+def version():
+    return jsonify({"version": APP_VERSION, "docx": DOCX_AVAILABLE})
 
 UNIDADES = ["cero","uno","dos","tres","cuatro","cinco","seis","siete","ocho","nueve"]
 ESPECIALES_10_19 = ["diez","once","doce","trece","catorce","quince","dieciséis","diecisiete","dieciocho","diecinueve"]
