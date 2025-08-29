@@ -3,8 +3,9 @@ import re, os, json, traceback
 from io import BytesIO
 from datetime import datetime
 
-APP_VERSION = "v3.3-versioncheck"
+APP_VERSION = "v3.4-colind-rumbo"
 
+# --- Dependencias opcionales para DOCX ---
 try:
     from docx import Document
     from docx.shared import Pt, Inches
@@ -13,12 +14,14 @@ try:
 except Exception:
     DOCX_AVAILABLE = False
 
+# --- Constantes de app ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGO_PATH = os.path.join(BASE_DIR, "static", "logo_hc.png")
 HEADER_TEXT = "Este programa fue creado por Honduras Constructores S de R L"
 
 app = Flask(__name__)
 
+# --- Utilidades para textos en español ---
 UNIDADES = ["cero","uno","dos","tres","cuatro","cinco","seis","siete","ocho","nueve"]
 ESPECIALES_10_19 = ["diez","once","doce","trece","catorce","quince","dieciséis","diecisiete","dieciocho","diecinueve"]
 VEINTI = ["veinte","veintiuno","veintidós","veintitrés","veinticuatro","veinticinco","veintiséis","veintisiete","veintiocho","veintinueve"]
@@ -39,6 +42,7 @@ def numero_a_palabras(n:int)->str:
     return pref if r==0 else f"{pref} {numero_a_palabras(r)}"
 
 def forma_masculina(frase:str)->str:
+    # uno -> un / veintiuno -> veintiún / "y uno" -> "y un"
     frase=re.sub(r"\bveintiuno\b","veintiún",frase)
     frase=re.sub(r" y uno\b"," y un",frase)
     frase=re.sub(r"\buno\b","un",frase)
@@ -62,19 +66,25 @@ def etiqueta_a_texto(etq:str, convertir_numeros=True)->str:
 CARD_WORD={"N":"Norte","S":"Sur","E":"Este","O":"Oeste","W":"Oeste"}
 
 def parsear_rumbo_texto(raw:str):
+    """Acepta: 
+       - 'N, 25, 35, 20, O'
+       - 'S 10°0\'30\'\' E'
+       - 'N 10 5 0 O'
+       - 'Norte ... Oeste' y también 'W' como 'O'.
+    """
     if not raw: return None
     t=raw.strip()
     if not t: return None
-    # Normaliza palabras cardinales a letras
+    # Palabras→letras
     t = re.sub(r'\bNORTE\b','N',t,flags=re.I)
     t = re.sub(r'\bSUR\b','S',t,flags=re.I)
     t = re.sub(r'\bESTE\b','E',t,flags=re.I)
     t = re.sub(r'\bOESTE\b','O',t,flags=re.I)
+    # Normalizaciones
     norm=t.replace("°"," ").replace("º"," ").replace("’","'").replace("´","'")
     norm=re.sub(r"[;|/]+"," ",norm)
     norm = re.sub(r'\bW\b','O',norm,flags=re.I)
-
-    # Formato con comas: N, 25, 35, 20, O
+    # Con comas
     partes=[p.strip() for p in norm.split(',') if p.strip()]
     if len(partes)>=5:
         c1=partes[0].upper()
@@ -86,8 +96,7 @@ def parsear_rumbo_texto(raw:str):
             return None
         c2=partes[4].upper()
         return (c1,g,m,s,c2)
-
-    # Formato libre: N 25 35 20 O (o con símbolos mezclados)
+    # Libre
     cards=re.findall(r"[NnSsEeOoWw]",norm)
     nums=re.findall(r"\d+",norm)
     if len(nums)>=3 and len(cards)>=2:
@@ -96,7 +105,6 @@ def parsear_rumbo_texto(raw:str):
         if c2=='W': c2='O'
         g=int(nums[0]); m=int(nums[1]); s=int(nums[2])
         return (c1,g,m,s,c2)
-
     return None
 
 def rumbo_texto(card1:str,g:int,m:int,s:int,card2:str)->str:
@@ -107,12 +115,94 @@ def rumbo_texto(card1:str,g:int,m:int,s:int,card2:str)->str:
             f"{m_w} {plural_si_corresponde(m,'minuto')}, "
             f"{s_w} {plural_si_corresponde(s,'segundo')} {CARD_WORD.get(card2,card2)}")
 
-def rumbo_compacto_solicitado(card1:str,g:int,m:int,s:int,card2:str)->str:
-    return f"{card1} ° {g} {m}´{s}´{card2}"
+def rumbo_compacto_usuario(card1:str,g:int,m:int,s:int,card2:str)->str:
+    """Devuelve exactamente: N 25° 35´20´´O (minutos y segundos sin espacio; último cardinal pegado)."""
+    return f"{card1} {g}° {m}´{s}´´{card2}"
 
-def rumbo_compacto_convencional(card1:str,g:int,m:int,s:int,card2:str)->str:
-    return f"{card1} {g}° {m}' {s}'' {card2}"
+def normalizar_colindancia(txt:str)->str:
+    """Si el usuario no escribe 'Colinda con', se antepone; si ya lo puso, no se duplica."""
+    if not txt: return ""
+    t = txt.strip()
+    if not t: return ""
+    if re.match(r"(?i)^\s*colinda\s+con\b", t):
+        return t[0].upper() + t[1:]  # capitaliza la primera
+    return "Colinda con " + t
 
+# ---------- Ayudante para construir tramos (lo usa index y descargar) ----------
+def construir_tramos_desde_form(form):
+    convertir = form.get('convertir','on')=='on'
+    est_ini_list = form.getlist('est_ini[]')
+    est_fin_list = form.getlist('est_fin[]')
+    rumbo_txt_list = form.getlist('rumbo_texto[]')
+    distancia_list = form.getlist('distancia[]')
+    colind_list = form.getlist('colindancia[]')
+
+    n = max(len(est_ini_list), len(est_fin_list), len(rumbo_txt_list), len(distancia_list), len(colind_list))
+    tramos = []
+    errores = []
+    prev_fin_raw = None
+
+    for i in range(n):
+        est_ini = (est_ini_list[i] if i < len(est_ini_list) else '').strip()
+        est_fin = (est_fin_list[i] if i < len(est_fin_list) else '').strip()
+        rumbo_raw = (rumbo_txt_list[i] if i < len(rumbo_txt_list) else '').strip()
+        distancia_raw = (distancia_list[i] if i < len(distancia_list) else '').strip()
+        colind = (colind_list[i] if i < len(colind_list) else '').strip()
+
+        # Auto-encadenar: si no hay inicio y existe un fin previo, usarlo
+        if not est_ini and prev_fin_raw:
+            est_ini = prev_fin_raw
+
+        # Saltar filas completamente vacías
+        if not (est_ini or est_fin or rumbo_raw or distancia_raw or colind):
+            continue
+
+        if not est_ini or not est_fin:
+            errores.append(f"Fila {i+1}: ingresa estación inicio y fin (auto-encadené inicio='{est_ini or '∅'}').")
+            prev_fin_raw = est_fin or prev_fin_raw
+            continue
+
+        parsed = parsear_rumbo_texto(rumbo_raw)
+        if not parsed:
+            errores.append(f"Fila {i+1}: no pude interpretar el rumbo \"{rumbo_raw}\".")
+            prev_fin_raw = est_fin
+            continue
+        c1,g,m,s,c2 = parsed
+
+        try:
+            distancia = float(distancia_raw) if distancia_raw else None
+        except ValueError:
+            errores.append(f"Fila {i+1}: distancia inválida.")
+            distancia = None
+
+        est_ini_txt = etiqueta_a_texto(est_ini, convertir_numeros=convertir)
+        est_fin_txt = etiqueta_a_texto(est_fin, convertir_numeros=convertir)
+        texto_rumbo = rumbo_texto(c1,g,m,s,c2)
+        compacto_usuario = rumbo_compacto_usuario(c1,g,m,s,c2)
+        colind_fmt = normalizar_colindancia(colind)
+
+        redaccion = (f"De la estación {est_ini_txt} a la estación {est_fin_txt}, "
+                     f"con rumbo {texto_rumbo} ({compacto_usuario}).")
+        if distancia is not None:
+            redaccion += f" Distancia {distancia:.2f} m."
+        if colind_fmt:
+            redaccion += f" {colind_fmt}"
+
+        tramos.append({
+            "est_ini_txt": est_ini_txt,
+            "est_fin_txt": est_fin_txt,
+            "rumbo_texto": texto_rumbo,
+            "rumbo_compacto": compacto_usuario,
+            "distancia": distancia,
+            "colindancia": colind_fmt,
+            "redaccion": redaccion
+        })
+
+        prev_fin_raw = est_fin
+
+    return tramos, errores
+
+# ---------- Rutas ----------
 @app.route('/_version')
 def version():
     return jsonify({"version": APP_VERSION, "docx": DOCX_AVAILABLE})
@@ -121,105 +211,45 @@ def version():
 def index():
     errores=[]; resultado=None
     if request.method=='POST':
-        convertir = request.form.get('convertir','on')=='on'
-        est_ini_list = request.form.getlist('est_ini[]')
-        est_fin_list = request.form.getlist('est_fin[]')
-        rumbo_txt_list = request.form.getlist('rumbo_texto[]')
-        distancia_list = request.form.getlist('distancia[]')
-        colind_list = request.form.getlist('colindancia[]')
-
-        n = max(len(est_ini_list), len(est_fin_list), len(rumbo_txt_list), len(distancia_list), len(colind_list))
-        tramos = []
-        prev_fin_raw = None
-
-        for i in range(n):
-            est_ini = (est_ini_list[i] if i < len(est_ini_list) else '').strip()
-            est_fin = (est_fin_list[i] if i < len(est_fin_list) else '').strip()
-            rumbo_raw = (rumbo_txt_list[i] if i < len(rumbo_txt_list) else '').strip()
-            distancia_raw = (distancia_list[i] if i < len(distancia_list) else '').strip()
-            colind = (colind_list[i] if i < len(colind_list) else '').strip()
-
-            # Auto-encadenar: si no hay inicio y existe un fin previo, usarlo
-            if not est_ini and prev_fin_raw:
-                est_ini = prev_fin_raw
-
-            # Saltar filas completamente vacías
-            if not (est_ini or est_fin or rumbo_raw or distancia_raw or colind):
-                continue
-
-            if not est_ini or not est_fin:
-                errores.append(f"Fila {i+1}: ingresa estación inicio y fin (auto-encadené inicio='{est_ini or '∅'}').")
-                prev_fin_raw = est_fin or prev_fin_raw
-                continue
-
-            parsed = parsear_rumbo_texto(rumbo_raw)
-            if not parsed:
-                errores.append(f"Fila {i+1}: no pude interpretar el rumbo \"{rumbo_raw}\".")
-                prev_fin_raw = est_fin
-                continue
-            c1,g,m,s,c2 = parsed
-
-            try:
-                distancia = float(distancia_raw) if distancia_raw else None
-            except ValueError:
-                errores.append(f"Fila {i+1}: distancia inválida.")
-                distancia = None
-
-            est_ini_txt = etiqueta_a_texto(est_ini, convertir_numeros=convertir)
-            est_fin_txt = etiqueta_a_texto(est_fin, convertir_numeros=convertir)
-            texto_rumbo = rumbo_texto(c1,g,m,s,c2)
-            compacto_solicitado = rumbo_compacto_solicitado(c1,g,m,s,c2)
-            compacto_convencional = rumbo_compacto_convencional(c1,g,m,s,c2)
-
-            redaccion = f"De la estación {est_ini_txt} a la estación {est_fin_txt}, con rumbo {texto_rumbo}."
-            if distancia is not None:
-                redaccion += f" Distancia {distancia:.2f} m."
-            if colind:
-                redaccion += f" {colind}"
-
-            tramos.append({
-                "est_ini_txt": est_ini_txt,
-                "est_fin_txt": est_fin_txt,
-                "rumbo_texto": texto_rumbo,
-                "rumbo_compacto_solicitado": compacto_solicitado,
-                "rumbo_compacto_convencional": compacto_convencional,
-                "distancia": distancia,
-                "colindancia": colind,
-                "redaccion": redaccion
-            })
-
-            # actualizar para encadenar siguiente inicio
-            prev_fin_raw = est_fin
-
-        if not tramos and not errores:
+        tramos, errores = construir_tramos_desde_form(request.form)
+        if tramos and not errores:
+            redaccion_total = "\n".join(f"{idx+1}) {t['redaccion']}" for idx, t in enumerate(tramos))
+            resultado = {"tramos": tramos, "redaccion_total": redaccion_total}
+        elif not tramos and not errores:
             errores.append("Agrega al menos un tramo.")
 
-        if not errores:
-            redaccion_total = "\n".join(f"{idx+1}) {t['redaccion']}" for idx, t in enumerate(tramos))
-            resultado = {
-                "tramos": tramos,
-                "redaccion_total": redaccion_total
-            }
-
-    return render_template('formulario.html', errores=errores, resultado=resultado,
-                           docx_ready=DOCX_AVAILABLE, app_version=APP_VERSION)
+    return render_template('formulario.html',
+                           errores=errores,
+                           resultado=resultado,
+                           docx_ready=DOCX_AVAILABLE,
+                           app_version=APP_VERSION)
 
 @app.route('/descargar', methods=['POST'])
 def descargar():
     if not DOCX_AVAILABLE:
         return "La librería python-docx no está instalada en el servidor.", 500
 
-    try:
-        payload_json = request.form.get('payload_json', '')
-        data = json.loads(payload_json)
-        tramos = data.get("tramos", [])
-    except Exception as e:
-        return f"No pude leer los datos para el Word. Detalle: {e}", 400
+    # 1) Camino principal: payload_json desde el template
+    tramos = None
+    payload_json = request.form.get('payload_json', '')
+    if payload_json:
+        try:
+            data = json.loads(payload_json)
+            tramos = data.get("tramos", [])
+        except Exception:
+            tramos = None
+
+    # 2) Fallback: reconstruir desde campos del formulario (por si tu template no envía payload_json)
+    if tramos is None or not isinstance(tramos, list) or not tramos:
+        tramos, errores = construir_tramos_desde_form(request.form)
+        if errores and not tramos:
+            return "No pude leer datos para el Word. Completa al menos un tramo.", 400
 
     try:
         doc = Document()
         styles=doc.styles['Normal']; styles.font.name='Calibri'; styles.font.size=Pt(11)
 
+        # Encabezado con logo + texto
         section=doc.sections[0]; header=section.header
         table=header.add_table(rows=1, cols=2); table.autofit=True
         try:
@@ -235,10 +265,12 @@ def descargar():
         doc.add_heading('Redacción topográfica', level=1)
         doc.add_paragraph(datetime.now().strftime("Generado el %Y-%m-%d %H:%M:%S"))
 
+        # Resumen
         doc.add_paragraph().add_run("Resumen de tramos:").bold = True
         for i, t in enumerate(tramos, start=1):
             doc.add_paragraph(f"{i}) {t['redaccion']}")
 
+        # Detalle
         doc.add_paragraph().add_run("Detalle:").bold = True
         tbl = doc.add_table(rows=1, cols=6)
         hdr = tbl.rows[0].cells
@@ -254,7 +286,7 @@ def descargar():
             row[0].text = t["est_ini_txt"]
             row[1].text = t["est_fin_txt"]
             row[2].text = t["rumbo_texto"]
-            row[3].text = t["rumbo_compacto_solicitado"]
+            row[3].text = t["rumbo_compacto"]
             row[4].text = "" if t["distancia"] is None else f"{t['distancia']:.2f}"
             row[5].text = t["colindancia"] or ""
 
