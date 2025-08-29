@@ -3,7 +3,7 @@ import re, os, json, traceback
 from io import BytesIO
 from datetime import datetime
 
-APP_VERSION = "v3.5-dist-letras"
+APP_VERSION = "v3.6-dist-frase-colinda-min"
 
 # --- Dependencias opcionales para DOCX ---
 try:
@@ -43,14 +43,11 @@ def numero_a_palabras(n:int)->str:
     return pref if r==0 else f"{pref} {numero_a_palabras(r)}"
 
 def entero_a_palabras_miles(n:int)->str:
-    """0–999,999 usando numero_a_palabras para cada bloque de 0–999."""
+    """0–999,999 usando numero_a_palabras para bloques."""
     if n<1000:
         return numero_a_palabras(n)
     miles, resto = divmod(n, 1000)
-    if miles == 1:
-        pref = "mil"
-    else:
-        pref = f"{numero_a_palabras(miles)} mil"
+    pref = "mil" if miles==1 else f"{numero_a_palabras(miles)} mil"
     return pref if resto==0 else f"{pref} {numero_a_palabras(resto)}"
 
 def forma_masculina(frase:str)->str:
@@ -78,7 +75,7 @@ def etiqueta_a_texto(etq:str, convertir_numeros=True)->str:
 CARD_WORD={"N":"Norte","S":"Sur","E":"Este","O":"Oeste","W":"Oeste"}
 
 def parsear_rumbo_texto(raw:str):
-    """Acepta: 
+    """Acepta:
        - 'N, 25, 35, 20, O'
        - 'S 10°0\'30\'\' E'
        - 'N 10 5 0 O'
@@ -132,13 +129,20 @@ def rumbo_compacto_usuario(card1:str,g:int,m:int,s:int,card2:str)->str:
     return f"{card1} {g}° {m}´{s}´´{card2}"
 
 def normalizar_colindancia(txt:str)->str:
-    """Si el usuario no escribe 'Colinda con', se antepone; si ya lo puso, no se duplica."""
+    """
+    Normaliza a 'colinda con ...' (c minúscula). Si ya empieza con 'colinda con' (en cualquier caso),
+    no duplica; fuerza la 'c' minúscula.
+    """
     if not txt: return ""
     t = txt.strip()
     if not t: return ""
-    if re.match(r"(?i)^\s*colinda\s+con\b", t):
-        return t[0].upper() + t[1:]  # capitaliza la primera
-    return "Colinda con " + t
+    # ¿ya trae 'colinda con'? (cualquier capitalización)
+    m = re.match(r"(?i)^\s*colinda\s+con\s*(.*)$", t)
+    if m:
+        resto = m.group(1).strip()
+        return f"colinda con {resto}" if resto else "colinda con"
+    # si no, anteponer
+    return f"colinda con {t}"
 
 def distancia_a_palabras(distancia_raw:str)->str|None:
     """
@@ -147,7 +151,6 @@ def distancia_a_palabras(distancia_raw:str)->str|None:
     """
     if not distancia_raw: return None
     txt = distancia_raw.strip().replace(",", ".")
-    # Solo números positivos con opcional decimal
     if not re.fullmatch(r"\d+(?:\.\d+)?", txt):
         return None
     int_part_str, dot, frac_part_str = txt.partition(".")
@@ -155,27 +158,21 @@ def distancia_a_palabras(distancia_raw:str)->str|None:
         int_val = int(int_part_str)
     except ValueError:
         return None
-    # 0–999,999
+    # Entero en palabras (hasta 999,999)
     if int_val > 999_999:
-        # Si es muy grande, no lo convertimos a palabras
-        int_words = int_part_str  # fallback: dígitos
+        int_words = int_part_str
     else:
         int_words = entero_a_palabras_miles(int_val)
 
     if dot and frac_part_str:
-        # quitar ceros a la izquierda en la parte decimal para pronunciar natural
         frac_trim = frac_part_str.lstrip("0")
         if frac_trim == "":
-            # si era 10.00 -> solo 'diez metros'
             return f"{int_words} metros"
         try:
             frac_val = int(frac_trim)
         except ValueError:
             return f"{int_words} metros"
-        if frac_val <= 999:
-            frac_words = numero_a_palabras(frac_val)
-        else:
-            frac_words = frac_trim  # fallback a dígitos si excede 999
+        frac_words = numero_a_palabras(frac_val) if frac_val <= 999 else frac_trim
         return f"{int_words} punto {frac_words} metros"
     else:
         return f"{int_words} metros"
@@ -221,12 +218,14 @@ def construir_tramos_desde_form(form):
             continue
         c1,g,m,s,c2 = parsed
 
-        # Distancia (num) y en letras
+        # Distancia (num) + en letras
         distancia = None
         dist_letras = None
+        dist_num_norm = None
         if distancia_raw:
             try:
                 distancia = float(distancia_raw.replace(",", "."))
+                dist_num_norm = f"{distancia:.2f}"  # para el paréntesis (10.15 m)
             except ValueError:
                 errores.append(f"Fila {i+1}: distancia inválida.")
             dist_letras = distancia_a_palabras(distancia_raw)
@@ -237,13 +236,16 @@ def construir_tramos_desde_form(form):
         compacto_usuario = rumbo_compacto_usuario(c1,g,m,s,c2)
         colind_fmt = normalizar_colindancia(colind)
 
+        # Redacción principal
         redaccion = (f"De la estación {est_ini_txt} a la estación {est_fin_txt}, "
-                     f"con rumbo {texto_rumbo} ({compacto_usuario}).")
+                     f"con rumbo {texto_rumbo} ({compacto_usuario})")
         if distancia is not None:
             if dist_letras:
-                redaccion += f" Distancia {distancia:.2f} m ({dist_letras})."
+                redaccion += f", con una distancia de {dist_letras} ({dist_num_norm} m)."
             else:
-                redaccion += f" Distancia {distancia:.2f} m."
+                redaccion += f", con una distancia de {dist_num_norm} m."
+        else:
+            redaccion += "."
         if colind_fmt:
             redaccion += f" {colind_fmt}"
 
@@ -254,6 +256,7 @@ def construir_tramos_desde_form(form):
             "rumbo_compacto": compacto_usuario,
             "distancia": distancia,
             "distancia_letras": dist_letras,
+            "distancia_num": dist_num_norm,
             "colindancia": colind_fmt,
             "redaccion": redaccion
         })
@@ -330,7 +333,7 @@ def descargar():
         for i, t in enumerate(tramos, start=1):
             doc.add_paragraph(f"{i}) {t['redaccion']}")
 
-        # Detalle
+        # Detalle (incluye distancia en letras y num)
         doc.add_paragraph().add_run("Detalle:").bold = True
         tbl = doc.add_table(rows=1, cols=7)
         hdr = tbl.rows[0].cells
@@ -348,7 +351,7 @@ def descargar():
             row[1].text = t["est_fin_txt"]
             row[2].text = t["rumbo_texto"]
             row[3].text = t["rumbo_compacto"]
-            row[4].text = "" if t["distancia"] is None else f"{t['distancia']:.2f}"
+            row[4].text = "" if t["distancia_num"] is None else t["distancia_num"]
             row[5].text = t.get("distancia_letras") or ""
             row[6].text = t["colindancia"] or ""
 
