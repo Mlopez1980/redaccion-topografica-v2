@@ -3,7 +3,7 @@ import re, os, json, traceback
 from io import BytesIO
 from datetime import datetime
 
-APP_VERSION = "v3.6-dist-frase-colinda-min"
+APP_VERSION = "v3.6.1-docx-headerwidth"
 
 # --- Dependencias opcionales para DOCX ---
 try:
@@ -51,7 +51,6 @@ def entero_a_palabras_miles(n:int)->str:
     return pref if resto==0 else f"{pref} {numero_a_palabras(resto)}"
 
 def forma_masculina(frase:str)->str:
-    # uno -> un / veintiuno -> veintiún / "y uno" -> "y un"
     frase=re.sub(r"\bveintiuno\b","veintiún",frase)
     frase=re.sub(r" y uno\b"," y un",frase)
     frase=re.sub(r"\buno\b","un",frase)
@@ -130,18 +129,16 @@ def rumbo_compacto_usuario(card1:str,g:int,m:int,s:int,card2:str)->str:
 
 def normalizar_colindancia(txt:str)->str:
     """
-    Normaliza a 'colinda con ...' (c minúscula). Si ya empieza con 'colinda con' (en cualquier caso),
+    Normaliza a 'colinda con ...' (c minúscula). Si ya empieza con 'colinda con' (cualquier caso),
     no duplica; fuerza la 'c' minúscula.
     """
     if not txt: return ""
     t = txt.strip()
     if not t: return ""
-    # ¿ya trae 'colinda con'? (cualquier capitalización)
     m = re.match(r"(?i)^\s*colinda\s+con\s*(.*)$", t)
     if m:
         resto = m.group(1).strip()
         return f"colinda con {resto}" if resto else "colinda con"
-    # si no, anteponer
     return f"colinda con {t}"
 
 def distancia_a_palabras(distancia_raw:str)->str|None:
@@ -158,12 +155,10 @@ def distancia_a_palabras(distancia_raw:str)->str|None:
         int_val = int(int_part_str)
     except ValueError:
         return None
-    # Entero en palabras (hasta 999,999)
     if int_val > 999_999:
         int_words = int_part_str
     else:
         int_words = entero_a_palabras_miles(int_val)
-
     if dot and frac_part_str:
         frac_trim = frac_part_str.lstrip("0")
         if frac_trim == "":
@@ -198,11 +193,9 @@ def construir_tramos_desde_form(form):
         distancia_raw = (distancia_list[i] if i < len(distancia_list) else '').strip()
         colind = (colind_list[i] if i < len(colind_list) else '').strip()
 
-        # Auto-encadenar: si no hay inicio y existe un fin previo, usarlo
         if not est_ini and prev_fin_raw:
             est_ini = prev_fin_raw
 
-        # Saltar filas completamente vacías
         if not (est_ini or est_fin or rumbo_raw or distancia_raw or colind):
             continue
 
@@ -225,7 +218,7 @@ def construir_tramos_desde_form(form):
         if distancia_raw:
             try:
                 distancia = float(distancia_raw.replace(",", "."))
-                dist_num_norm = f"{distancia:.2f}"  # para el paréntesis (10.15 m)
+                dist_num_norm = f"{distancia:.2f}"
             except ValueError:
                 errores.append(f"Fila {i+1}: distancia inválida.")
             dist_letras = distancia_a_palabras(distancia_raw)
@@ -236,7 +229,6 @@ def construir_tramos_desde_form(form):
         compacto_usuario = rumbo_compacto_usuario(c1,g,m,s,c2)
         colind_fmt = normalizar_colindancia(colind)
 
-        # Redacción principal
         redaccion = (f"De la estación {est_ini_txt} a la estación {est_fin_txt}, "
                      f"con rumbo {texto_rumbo} ({compacto_usuario})")
         if distancia is not None:
@@ -302,7 +294,7 @@ def descargar():
         except Exception:
             tramos = None
 
-    # 2) Fallback: reconstruir desde campos del formulario (por si tu template no envía payload_json)
+    # 2) Fallback: reconstruir desde campos del formulario
     if tramos is None or not isinstance(tramos, list) or not tramos:
         tramos, errores = construir_tramos_desde_form(request.form)
         if errores and not tramos:
@@ -312,18 +304,29 @@ def descargar():
         doc = Document()
         styles=doc.styles['Normal']; styles.font.name='Calibri'; styles.font.size=Pt(11)
 
-        # Encabezado con logo + texto
-        section=doc.sections[0]; header=section.header
-        table=header.add_table(rows=1, cols=2); table.autofit=True
+        # Encabezado con logo + texto (fix: add_table requiere width)
+        section = doc.sections[0]
+        header = section.header
+        usable_width = section.page_width - section.left_margin - section.right_margin
+        try:
+            table = header.add_table(rows=1, cols=2, width=usable_width)
+        except TypeError:
+            # Fallback por si la firma no acepta width por nombre
+            table = header.add_table(1, 2, usable_width)
+
+        # Logo a la izquierda
         try:
             if os.path.exists(LOGO_PATH):
-                left_p=table.cell(0,0).paragraphs[0]
-                left_p.alignment=WD_ALIGN_PARAGRAPH.LEFT
+                left_p = table.cell(0,0).paragraphs[0]
+                left_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 left_p.add_run().add_picture(LOGO_PATH, width=Inches(1.8))
         except Exception:
             pass
-        right_p=table.cell(0,1).paragraphs[0]; right_p.alignment=WD_ALIGN_PARAGRAPH.RIGHT
-        rt=right_p.add_run(HEADER_TEXT); rt.bold=True; rt.font.size=Pt(10)
+
+        # Texto a la derecha
+        right_p = table.cell(0,1).paragraphs[0]
+        right_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        rt = right_p.add_run(HEADER_TEXT); rt.bold = True; rt.font.size = Pt(10)
 
         doc.add_heading('Redacción topográfica', level=1)
         doc.add_paragraph(datetime.now().strftime("Generado el %Y-%m-%d %H:%M:%S"))
@@ -333,7 +336,7 @@ def descargar():
         for i, t in enumerate(tramos, start=1):
             doc.add_paragraph(f"{i}) {t['redaccion']}")
 
-        # Detalle (incluye distancia en letras y num)
+        # Detalle
         doc.add_paragraph().add_run("Detalle:").bold = True
         tbl = doc.add_table(rows=1, cols=7)
         hdr = tbl.rows[0].cells
